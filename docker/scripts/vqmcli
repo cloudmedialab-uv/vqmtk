@@ -1,0 +1,1408 @@
+#!/bin/bash
+#
+# Exit values:
+#  0 on success
+#  1 on failure
+#
+
+# Name of the script
+SCRIPT=$(basename "$0")
+
+# Current version
+VERSION="2.0"
+
+#Colors message
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+GREEN='\033[0;32m'
+RED="\033[0;31m"
+NC='\033[0m' # No Color
+
+export TERM="xterm-256color"
+
+#
+# Message to display for usage and help.
+#
+function usage {
+
+    printf "
+Utility $SCRIPT to obtain video quality metrics.
+
+${YELLOW}Usage${NC}:
+    $SCRIPT [options] [-r | --reference reference_video.{*}] [-d | --distorted distorted_video.{*}] [-o | --outdir {my_results}] [optional] ${PURPLE}<selectd>${NC} [metrics]
+
+${YELLOW}Options${NC}:
+    -h, --help    Print help.
+    -V, --version Print version.
+
+${YELLOW}Required arguments${NC}:
+    -r, --ref     Reference video {.mp4,.mkv,.webm,.y4m}.
+    -d, --dist    Distorted video {.mp4,.mkv,.webm,.y4m}.
+    -o, --outdir  Directory where results are stored
+
+    ${YELLOW}[Info].${NC} Supported codecs and containers see README.
+
+${YELLOW}Optional arguments${NC}:
+    -j, --ext     {json,csv,xml} Format of results (default:
+    -z, --size    {1,2,3,4} Segment size in seconds (default: 1 second).
+
+${YELLOW}Metrics${NC}:
+    -l, --all        Calculate all metrics.
+    -a, --apsnr      Calculate Average Peak Signal-to-Noise Ratio (APSNR).
+    -b, --brisque    Calculate Blind/Referenceless Image Spatial QUality Evaluator features (BRISQUE).
+    -c, --cambi      Calculate Contrast Aware Multiscale Banding Index (CAMBI).
+    -e, --ciede2000  Calculate Color-Difference Formula (CIEDE2000).
+    -f, --vif        Calculate Visual information fidelity (VIF).
+    -m, --msssim     Calculate Multiscale Structural Similarity Index (MS-SSIM).
+    -n, --niqe       Calculate Computes Naturalness Image Quality Evaluator (NIQE).
+    -p, --psnr       Calculate Peak Signal-to-Noise Ratio (PSNR).
+    -x, --psnrhvs    Calculate PSNR-Human Visual System (PSNR HVS)
+    -s, --ssim       Calculate Structural Similarity Index (SSIM).
+    -t, --strred     Calculate Spatio-Temporal Reduced Reference Entropic Differencing (ST-RRED).
+    -w, --viideo     Calculate Video Intrinsic Integrity and Distortion Evaluation Oracle (VIIDEO).
+    -v, --vmaf       Calculate Video Multi-Method Assessment Fusion (VMAF).
+    -q, --vqm        Calculate Video Quality Model (VQM).
+
+${BLUE}Example${NC}:
+  vqmcli -r input_ref.mp4 -d input_dis.mp4 -o {mounted_path}/{my_results} --size 2 --psnr --ssim --ext json
+
+" | more
+}
+
+#
+# Message to display when bad usage.
+#
+function badUsage {
+    local message="$1"
+    local txt=(
+        "For an overview of the command, execute:"
+        "$SCRIPT --help"
+    )
+
+    [[ $message ]] && printf "%s\\n" "$message"
+
+    printf "%s\\n" "${txt[@]}"
+}
+
+#
+# Message to display for version.
+#
+function version {
+    local txt=(
+        "$SCRIPT version $VERSION"
+    )
+
+    printf "%s\\n" "${txt[@]}"
+}
+
+#
+# Create an empty directory
+#
+function createDirectory() {
+    dir=$1
+    if [ -d $dir ]; then
+        #printf "${GREEN}[Step]:${NC} The directory exist.\n"
+        aux=1
+    else
+        mkdir -p $dir
+    fi
+}
+
+#
+# Getting video Steprmation with FFmpeg
+#
+function flagsFfprobe() {
+    video=$1
+    flat=$2
+    if [ -z "$video" ]; then
+        echo "flats video"
+        echo "  Returns the specific flag of the video"
+    else
+        IN= echo "$(ffprobe -hide_banner -show_entries stream=$flat -select_streams v -print_format flat $video 2>/dev/null | cut -d '=' -f2 | cut -d '"' -f2)"
+    fi
+}
+
+function flagsFfprobeTags() {
+    video=$1
+    flat=$2
+    if [ -z "$video" ]; then
+        echo "flats video"
+        echo "  Returns the fps of the video"
+    else
+        IN= echo "$(ffprobe -hide_banner -show_entries stream_tags=$flat -select_streams v -print_format flat $video 2>/dev/null | cut -d '=' -f2 | cut -d '"' -f2)"
+    fi
+}
+
+#
+# Get name of a file
+#
+function myFileName() {
+    local FILE="$1"
+    FILE="${FILE##*/}"
+    [[ "$2" = "1" ]] && echo "${FILE%.*}" || echo "${FILE%%.*}"
+}
+
+#
+# Take time
+#
+function takeTime() {
+    echo "$(date +%H)h-$(date +%M)m-$(date +%S)s"
+}
+
+#
+# Draw spinner
+#
+
+function cursorBack() {
+    echo -en "\033[$1D"
+}
+
+function spinner {
+    tput civis # cursor invisible
+    local PID=$!
+    local i=1
+    local sp="◰◳◲◱"
+    echo -n ' '
+    while [ -d /proc/$PID ]; do
+        printf "\b${sp:i++%${#sp}:1}"
+        sleep 0.15
+    done
+    printf "\b${sp:i++%${#sp}:0}"
+}
+
+#
+# Required metrics
+#
+function requiredMetrics {
+
+    if [ $APSNR == "unset" ] && [ $BRISQUE == "unset" ] &&
+        [ $CAMBI == "unset" ] && [ $CIEDE2000 == "unset" ] &&
+        [ $MSSSIM == "unset" ] &&
+        [ $NIQE == "unset" ] && [ $PSNR == "unset" ] &&
+        [ $PSNRHVS == "unset" ] && [ $SSIM == "unset" ] &&
+        [ $STRRED == "unset" ] && [ $VIIDEO == "unset" ] &&
+        [ $VMAF == "unset" ] && [ $VQM == "unset" ] &&
+        [ $VIF == "unset" ] && [ $ALL == "unset" ]; then
+        printf "${RED}[Error]:${NC} A metric quality is required. \n"
+        badUsage
+        exit 1
+    fi
+
+}
+
+#
+# Required arguments
+#
+function requiredArguments {
+
+    if [ "$V_DISTORTED" == "unset" ]; then
+        printf "${RED}[Error]:${NC} Encoded video is required. \n"
+        badUsage
+        exit 1
+    fi
+
+    if [ "$OUTDIR" == "unset" ]; then
+        printf "${RED}[Error]:${NC} Output directory must be specified. \n"
+        badUsage
+        exit 1
+    fi
+
+    local ref_type=$(flagsFfprobe $V_REFERENCE codec_type)
+    local dis_type=$(flagsFfprobe $V_DISTORTED codec_type)
+
+    if [ $APSNR == "unset" ] &&
+        [ $CIEDE2000 == "unset" ] &&
+        [ $MSSSIM == "unset" ] &&
+        [ $PSNR == "unset" ] &&
+        [ $PSNRHVS == "unset" ] && [ $SSIM == "unset" ] &&
+        [ $STRRED == "unset" ] &&
+        [ $VMAF == "unset" ] && [ $VQM == "unset" ] &&
+        [ $VIF == "unset" ] && [ $ALL == "unset" ]; then
+        printf "${GREEN}[Step]:${NC} Analyzes video without reference. \n"
+        NO_REFERENCE=1
+    elif [ "$V_REFERENCE" == "unset" ]; then
+        printf "\n${RED}[Error]:${NC} Some metrics require a reference video.\n"
+        badUsage
+        exit 1
+    fi
+
+    if [ "$ref_type" != "video" ] && [ "$NO_REFERENCE" != "1" ]; then
+        printf "${RED}[Error]:${NC} The reference file is not a video: ${YELLOW}$V_REFERENCE${NC} \n"
+        badUsage
+        exit 1
+    fi
+
+    if [ "$dis_type" != "video" ]; then
+        printf "${RED}[Error]:${NC} The distorted file is not a video: ${YELLOW}$V_DISTORTED${NC} \n"
+        badUsage
+        exit 1
+    fi
+
+}
+
+#
+# Check videos
+#
+function checkVideos {
+
+    local vid_ref=$1
+    local vid_dis=$2
+    local no_ref=$3
+
+    if [ $no_ref == "1" ]; then
+        SCALE=0
+    else
+
+        local ext_ref=$(echo "${vid_ref#*.}")
+        local ext_dis=$(echo "${vid_dis#*.}")
+
+        if [ $ext_ref == "mkv" ] || [ $ext_ref == "webm" ]; then
+            local dur_ref_aux=$(flagsFfprobeTags $vid_ref duration)
+            local dur_ref=$(echo $dur_ref_aux | awk -F: '{ print ($1 * 3600) + ($2 * 60) + $3 }')
+        else
+            local dur_ref=$(flagsFfprobe $vid_ref duration)
+        fi
+
+        if [ $ext_dis == "mkv" ] || [ $ext_dis == "webm" ]; then
+            local dur_dis_aux=$(flagsFfprobeTags $vid_dis duration)
+            local dur_dis=$(echo $dur_dis_aux | awk -F: '{ print ($1 * 3600) + ($2 * 60) + $3 }')
+        else
+            local dur_dis=$(flagsFfprobe $vid_dis duration)
+        fi
+
+        local wid_ref=$(flagsFfprobe $vid_ref width)
+        local hei_ref=$(flagsFfprobe $vid_ref height)
+
+        local wid_dis=$(flagsFfprobe $vid_dis width)
+        local hei_dis=$(flagsFfprobe $vid_dis height)
+
+        # Same duration
+        # if [[ $(python3 -c "print($dur_dis==$dur_ref)") != "False" ]]; then
+        #     echo "Same duration" >/dev/null
+        # else
+        #     printf "${RED}[Error]:${NC} The reference video and the distorted video do not have the same duration.\n"
+        #     badUsage
+        #     exit 0
+        # fi
+
+        # Same resolution
+        if [ "$wid_ref" = "$wid_dis" ] && [ "$hei_ref" = "$hei_dis" ]; then
+            SCALE=0
+        else
+            if [ "$wid_ref" -lt "$wid_dis" ] && [ "$hei_ref" -lt "$hei_dis" ]; then
+                printf "\n${RED}[Error]:${NC} The reference video cannot have a lower resolution than the distorted video.\n"
+                badUsage
+                exit 0
+            else
+                SCALE=1
+            fi
+        fi
+
+    fi
+
+}
+
+#
+# Check size-segment argument
+# range= {1,2,3,4}
+#
+function checkSizeSegment {
+
+    local sec_seg=$1
+    if [[ $sec_seg =~ ^[1,2,3,4]+$ ]]; then
+        aux="OK"
+    else
+        printf "${RED}[Error]:${NC} The segment size option has the wrong format or is out of range {1,2,3,4}: ${RED}$sec_seg${NC}.\n"
+        badUsage
+        exit 0
+    fi
+}
+
+function path-reference {
+    PATHREF=$1
+}
+
+function path-distorted {
+    PATHDIS=$1
+}
+
+#
+# Segment the video given the size of the segment in seconds.
+#
+
+function splitVideoProcess {
+
+    local video_ref=$1
+    local video_dis=$2
+    local sec_seg=$3
+    local typ_path=$4
+    local scale=$5
+
+    local cod_name=$(flagsFfprobe $video_dis codec_name)
+
+    local pix_fmt_dis=$(flagsFfprobe $video_dis pix_fmt | tail -1 | head -c7)
+    local pix_fmt_ref=$(flagsFfprobe $video_ref pix_fmt | tail -1 | head -c7)
+
+    local vid_name_dis=$(myFileName $video_dis)
+    local vid_name_ref=$(myFileName $video_ref)
+
+    path-reference "/tmp/ref-$vid_name_ref-$cod_name-$pix_fmt_ref-$sec_seg"
+    local path_ref="/tmp/ref-$vid_name_ref-$cod_name-$pix_fmt_ref-$sec_seg"
+
+    path-distorted "/tmp/dis-$vid_name_dis-$cod_name-$pix_fmt_dis-$sec_seg"
+    local path_dis="/tmp/dis-$vid_name_dis-$cod_name-$pix_fmt_dis-$sec_seg"
+
+    local ext=$(echo "${video_dis#*.}")
+
+    if [ "$scale" = "1" ] && [ "$typ_path" = "0" ]; then
+
+        local wid_ref=$(flagsFfprobe $video_ref width)
+        local hei_ref=$(flagsFfprobe $video_ref height)
+
+        #https://trac.ffmpeg.org/wiki/Scaling
+        printf "\n${YELLOW}[Info]: Scaling distorted video. ${NC}"
+        ffmpeg -y -hide_banner -i $video_dis -pix_fmt $pix_fmt_dis -vf "scale=$wid_ref:$hei_ref" /tmp/$vid_name_dis.y4m 2>/dev/null &
+        spinner
+
+        V_DISTORTED=/tmp/$vid_name_dis.y4m
+        video_dis=/tmp/$vid_name_dis.y4m
+
+    fi
+
+    if [ $ext == "mkv" ] || [ $ext == "webm" ]; then
+        local dur_aux=$(flagsFfprobeTags $video_dis duration)
+        local duration=$(echo $dur_aux | awk -F: '{ print ($1 * 3600) + ($2 * 60) + $3 }')
+    else
+        local duration=$(flagsFfprobe $video_dis duration)
+    fi
+
+    local duration=$(echo $duration | awk '{print int($1)}')
+    local n=0
+    local i=1
+
+    BITDEPTH=8
+
+    createDirectory $path_ref
+    createDirectory $path_ref/y4m
+    createDirectory $path_ref/yuv
+    createDirectory $path_ref/$ext
+
+    createDirectory $path_dis
+    createDirectory $path_dis/y4m
+    createDirectory $path_dis/yuv
+    createDirectory $path_dis/$ext
+
+    createDirectory /tmp/risize/ref/
+    createDirectory /tmp/risize/dis/
+
+    n_chunks=$(python3 -c "import math;  print(math.ceil($duration/$sec_seg))")
+
+    while [ $n -lt $duration ]; do
+
+        printf "\n\n${YELLOW}[Info]: Processing Chunk $i of $n_chunks. ${NC}"
+
+        if [ $typ_path == "1" ]; then
+
+            ffmpeg -y -hide_banner -ss $n -i $video_dis -t $sec_seg -pix_fmt $pix_fmt_dis $path_dis/y4m/chunk$i.y4m 2>/dev/null &
+            spinner
+
+            if [ $CAMBI == "cambi" ]; then
+
+                ffmpeg -y -hide_banner -ss $n -i $video_dis -t $sec_seg -pix_fmt $pix_fmt_dis -vsync 0 $path_dis/yuv/chunk$i.yuv 2>/dev/null &
+                spinner
+            fi
+
+        else
+
+            if [ $CAMBI == "cambi" ]; then
+
+                ffmpeg -y -hide_banner -ss $n -i $video_dis -t $sec_seg -pix_fmt $pix_fmt_dis -vsync 0 $path_dis/yuv/chunk$i.yuv 2>/dev/null &
+                spinner
+
+                ffmpeg -y -hide_banner -ss $n -i $video_ref -t $sec_seg -pix_fmt $pix_fmt_ref -vsync 0 $path_ref/yuv/chunk$i.yuv 2>/dev/null &
+                spinner
+
+            fi
+
+            if [ ! -f "$path/y4m/chunk0.y4m" ]; then
+
+                if [ $APSNR != "unset" ] || [ $BRISQUE != "unset" ] ||
+                    [ $CIEDE2000 != "unset" ] || [ $MSSSIM != "unset" ] ||
+                    [ $NIQE != "unset" ] || [ $PSNR != "unset" ] ||
+                    [ $PSNRHVS != "unset" ] || [ $SSIM != "unset" ] ||
+                    [ $STRRED != "unset" ] || [ $VIIDEO != "unset" ] ||
+                    [ $VMAF != "unset" ] || [ $VQM != "unset" ] ||
+                    [ $VIF != "unset" ] || [ $ALL != "unset" ]; then
+
+                    ffmpeg -y -hide_banner -ss $n -i $video_dis -t $sec_seg -pix_fmt $pix_fmt_dis $path_dis/y4m/chunk$i.y4m 2>/dev/null &
+                    spinner
+
+                    ffmpeg -y -hide_banner -ss $n -i $video_ref -t $sec_seg -pix_fmt $pix_fmt_ref $path_ref/y4m/chunk$i.y4m 2>/dev/null &
+                    spinner
+
+                fi
+            fi
+        fi
+
+        processMetric $path_ref/y4m/chunk$i.y4m $path_dis/y4m/chunk$i.y4m
+
+        if [ -f $path_ref/y4m/chunk$i.y4m ]; then
+            rm $path_ref/y4m/chunk$i.y4m
+            rm $path_dis/y4m/chunk$i.y4m
+        fi
+        n=$((n + sec_seg))
+        i=$((i + 1))
+
+    done
+
+}
+
+#
+# Segment the videos
+#
+function splitVideos {
+
+    local vid_ref=$1
+    local vid_dis=$2
+    local no_ref=$3
+    local sec_seg=$4
+    local scale=$5
+
+    checkSizeSegment $sec_seg
+
+    if [ $no_ref == "1" ]; then
+        printf "\n${YELLOW}[Info]: Spliting only distorted video: ${NC}Segment size $sec_seg sec. "
+        splitVideoProcess $vid_ref $vid_dis $sec_seg $no_ref $scale
+
+    else
+        printf "\n${YELLOW}[Info]: Spliting the videos: ${NC} Segment size $sec_seg sec. "
+        splitVideoProcess $vid_ref $vid_dis $sec_seg $no_ref $scale
+    fi
+}
+
+function check_resolution() {
+
+    local width=$1
+    local height=$2
+    local modulo_width=$(($width % 4))
+    local modulo_height=$(($height % 4))
+
+    if [ $modulo_width -eq 0 ] && [ $modulo_height -eq 0 ]; then
+        tight=0
+        resolution="$width $height"
+    else
+        fit_width=0
+        fit_height=0
+        if [ $modulo_width -ne 0 ]; then
+            fit_width=$((4 - $modulo_width))
+        fi
+        if [ $modulo_height -ne 0 ]; then
+            fit_height=$((4 - $modulo_height))
+        fi
+        new_width=$(($width + $fit_width))
+        new_height=$(($height + $fit_height))
+        tight=1
+        resolution="$new_width $new_height"
+    fi
+
+    echo "$tight $resolution"
+}
+
+function resize_video {
+
+    local ref_video=$1
+    local dis_video=$2
+    local wid_ref=$3
+    local hei_ref=$4
+
+    ruta=$ref_video
+    file_name=$(basename $ruta)
+
+    local ref_vid="/tmp/risize/ref/$file_name"
+    local dis_vid="/tmp/risize/dis/$file_name"
+
+    ffmpeg -i $ref_video -crf 0 -vf "scale='min($wid_ref,iw)':min'($hei_ref,ih)':force_original_aspect_ratio=decrease,pad=$wid_ref:$hei_ref:-1:-1:color=black" $ref_vid 2>/dev/null
+    ffmpeg -i $dis_video -crf 0 -vf "scale='min($wid_ref,iw)':min'($hei_ref,ih)':force_original_aspect_ratio=decrease,pad=$wid_ref:$hei_ref:-1:-1:color=black" $dis_vid 2>/dev/null
+
+    echo "$ref_vid $dis_vid"
+
+}
+
+#
+# Calculate APSNR
+#
+
+function apsnr {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    file_name=$(basename $ref_video)
+
+    if ! [ -e /tmp/ref/$file_name ]; then
+
+        local wid_ref=$(flagsFfprobe $vid_ref width)
+        local hei_ref=$(flagsFfprobe $vid_ref height)
+
+        results_check_resolution=$(check_resolution $wid_ref $hei_ref)
+        read -r tight width height <<<"$results_check_resolution"
+
+        if [ $tight -eq 1 ]; then
+
+            resul_resize=$(resize_video $ref_video $dis_video $width $height)
+            read -r ref_vid dis_vid <<<"$resul_resize"
+
+            ref_video=$ref_vid
+            dis_video=$dis_vid
+
+        fi
+    fi
+
+    local vid_name=$(myFileName $ref_video)
+
+    createDirectory $OUTDIR/apsnr
+    if [ ! -f $OUTDIR/apsnr/chunks.csv ]; then
+        echo "chunk_n,apsnr" >$OUTDIR/apsnr/chunks.csv
+    fi
+
+    av-metrics-tool --metric apsnr --export-csv $OUTDIR/apsnr/$vid_name.csv $ref_video $dis_video >/dev/null
+    apsnr=$(cat $OUTDIR/apsnr/$vid_name.csv | cut -d"," -f3 | tail -1)
+    echo "$i,$apsnr" >>$OUTDIR/apsnr/chunks.csv
+}
+
+#
+# Calculate CIEDE2000
+#
+function ciede2000 {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    file_name=$(basename $ref_video)
+
+    if ! [ -e /tmp/ref/$file_name ]; then
+
+        local wid_ref=$(flagsFfprobe $vid_ref width)
+        local hei_ref=$(flagsFfprobe $vid_ref height)
+
+        results_check_resolution=$(check_resolution $wid_ref $hei_ref)
+        read -r tight width height <<<"$results_check_resolution"
+
+        if [ $tight -eq 1 ]; then
+
+            resul_resize=$(resize_video $ref_video $dis_video $width $height)
+            read -r ref_vid dis_vid <<<"$resul_resize"
+
+            ref_video=$ref_vid
+            dis_video=$dis_vid
+
+        fi
+    fi
+
+    local vid_name=$(myFileName $ref_video)
+
+    createDirectory $OUTDIR/ciede2000
+    if [ ! -f $OUTDIR/ciede2000/chunks.csv ]; then
+        echo "chunk_n,ciede2000" >$OUTDIR/ciede2000/chunks.csv
+    fi
+    av-metrics-tool --metric ciede2000 --export-csv $OUTDIR/ciede2000/$vid_name.csv $ref_video $dis_video >/dev/null
+    ciede2000=$(cat $OUTDIR/ciede2000/$vid_name.csv | cut -d"," -f7 | tail -1)
+    echo "$i,$ciede2000" >>$OUTDIR/ciede2000/chunks.csv
+
+}
+
+#
+# Calculate PSNRHVS
+#
+function psnrhvs {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    file_name=$(basename $ref_video)
+
+    if ! [ -e /tmp/ref/$file_name ]; then
+
+        local wid_ref=$(flagsFfprobe $vid_ref width)
+        local hei_ref=$(flagsFfprobe $vid_ref height)
+
+        results_check_resolution=$(check_resolution $wid_ref $hei_ref)
+        read -r tight width height <<<"$results_check_resolution"
+
+        if [ $tight -eq 1 ]; then
+
+            resul_resize=$(resize_video $ref_video $dis_video $width $height)
+            read -r ref_vid dis_vid <<<"$resul_resize"
+
+            ref_video=$ref_vid
+            dis_video=$dis_vid
+
+        fi
+    fi
+
+    local vid_name=$(myFileName $ref_video)
+
+    createDirectory $OUTDIR/psnrhvs
+    if [ ! -f $OUTDIR/psnrhvs/chunks.csv ]; then
+        echo "chunk_n,psnrhvs" >$OUTDIR/psnrhvs/chunks.csv
+    fi
+    av-metrics-tool --metric psnrhvs --export-csv $OUTDIR/psnrhvs/$vid_name.csv $ref_video $dis_video >/dev/null
+    psnrhvs=$(cat $OUTDIR/psnrhvs/$vid_name.csv | cut -d"," -f4 | tail -1)
+
+    if [ "$psnrhvs" == "inf" ]; then
+        local psnrhvs=$((60))
+    fi
+    echo "$i,$psnrhvs" >>$OUTDIR/psnrhvs/chunks.csv
+
+}
+
+#
+# Calculate NIQE
+#
+function niqe {
+
+    local dis_video=$1
+    createDirectory $OUTDIR/niqe
+
+    if [ ! -f $OUTDIR/niqe/chunks.csv ]; then
+        echo "chunk_n,niqe" >$OUTDIR/niqe/chunks.csv
+    fi
+
+    niqe=$(/scikitvenv/bin/python /scripts/scikit_metric.py $dis_video none niqe 2>/dev/null)
+    echo "$i,$niqe" >>$OUTDIR/niqe/chunks.csv
+
+}
+
+#
+# Calculate BRISQUE
+#
+function brisque {
+
+    local dis_video=$1
+    createDirectory $OUTDIR/brisque
+
+    if [ ! -f $OUTDIR/brisque/chunks.csv ]; then
+        echo "chunk_n,brisque" >$OUTDIR/brisque/chunks.csv
+    fi
+
+    brisque=$(/scikitvenv/bin/python /scripts/scikit_metric.py $dis_video none brisque 2>/dev/null)
+    echo "$i,$brisque" >>$OUTDIR/brisque/chunks.csv
+
+}
+
+#
+# Calculate VIIDEO
+#
+function viideo {
+
+    local dis_video=$1
+    createDirectory $OUTDIR/viideo
+
+    if [ ! -f $OUTDIR/viideo/chunks.csv ]; then
+        echo "chunk_n,viideo" >$OUTDIR/viideo/chunks.csv
+    fi
+
+    viideo=$(/scikitvenv/bin/python /scripts/scikit_metric.py $dis_video none viideo 2>/dev/null)
+    echo "$i,$viideo" >>$OUTDIR/viideo/chunks.csv
+
+}
+
+#
+# Calculate CAMBI
+#
+function cambi {
+
+    local video=$V_DISTORTED
+
+    local dis_video=$(ls -d $PATHDIS/yuv/chunk*)
+
+    local vid_name=$(myFileName $dis_video)
+
+    local width=$(flagsFfprobe $video width)
+    local height=$(flagsFfprobe $video height)
+
+    local pix_fmt=$(flagsFfprobe $video pix_fmt)
+
+    pix_fmt=${pix_fmt//[!0-9]/}
+    pix_fmt=$(echo $pix_fmt | head -c 3)
+
+    createDirectory $OUTDIR/cambi
+    local output_dir=$(readlink -f $OUTDIR)
+    pathRelative=$(pwd)
+
+    if [ ! -f $output_dir/cambi/chunks.csv ]; then
+        echo "chunk_n,cambi" >$output_dir/cambi/chunks.csv
+    fi
+
+    for ((i = 1; i <= $(ls $PATHDIS/yuv | wc -l); i++)); do
+        cd /vmaf &&
+            PYTHONPATH=python /vmaf/libvmaf/build/tools/vmaf \
+                --reference $dis_video \
+                --distorted $dis_video \
+                --width $width --height $height --pixel_format $pix_fmt --bitdepth $BITDEPTH \
+                --no_prediction --feature cambi --output $output_dir/cambi/$vid_name.xml 2>/dev/null
+
+        if [ ! -f "$output_dir/cambi/chunk1.xml" ] && [ "$BITDEPTH" -lt "12" ]; then
+            BITDEPTH=$(($BITDEPTH + 2))
+            i=0
+        else
+            cambi=$(cat $output_dir/cambi/$vid_name.xml | grep "mean" | cut -d"=" -f5 | cut -d'"' -f2)
+            echo "$(echo "${vid_name//[!0-9]/}"),$cambi" >>$output_dir/cambi/chunks.csv
+        fi
+    done
+
+    rm $PATHDIS/yuv/chunk*
+
+    cd $pathRelative
+
+}
+
+#
+# Calculate STRRED
+#
+function strred {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    createDirectory $OUTDIR/strred
+
+    if [ ! -f $OUTDIR/strred/chunks.csv ]; then
+        echo "chunk_n,strred,strredssn" >$OUTDIR/strred/chunks.csv
+    fi
+
+    strred=$(/scikitvenv/bin/python /scripts/scikit_metric.py $dis_video $ref_video strred 2>/dev/null)
+    echo "$i,$strred" >>$OUTDIR/strred/chunks.csv
+
+}
+
+#
+# Calculate PSNR
+#
+function psnr {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    local vid_name=$(myFileName $ref_video)
+
+    local fps=$(flagsFfprobe $ref_video r_frame_rate)
+    local fps=$(echo $fps | bc -l)
+
+    createDirectory $OUTDIR/psnr
+
+    if [ ! -f $OUTDIR/psnr/chunks.csv ]; then
+        echo "chunk_n,psnr" >$OUTDIR/psnr/chunks.csv
+    fi
+
+    local psnr=$(ffmpeg -hide_banner -r $fps -i $dis_video -r $fps -i $ref_video -lavfi \
+        "[0:v]settb=AVTB,setpts=PTS-STARTPTS[distorted];\
+                [1:v]settb=AVTB,setpts=PTS-STARTPTS[reference];\
+                [distorted][reference]psnr=f=$OUTDIR/psnr/$vid_name.txt" -f null - 2>&1 | tail -1 | awk '{print $8}' | cut -d":" -f2)
+
+    if [ "$psnr" == "inf" ]; then
+        local psnr=$((60))
+    fi
+    echo "$i,$psnr" >>$OUTDIR/psnr/chunks.csv
+
+}
+
+#
+# Calculate SSIM
+#
+function ssim {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    local vid_name=$(myFileName $ref_video)
+
+    local fps=$(flagsFfprobe $ref_video r_frame_rate)
+    local fps=$(echo $fps | bc -l)
+
+    createDirectory $OUTDIR/ssim
+
+    if [ ! -f $OUTDIR/ssim/chunks.csv ]; then
+        echo "chunk_n,ssim" >$OUTDIR/ssim/chunks.csv
+    fi
+
+    local ssim=$(ffmpeg -hide_banner -r $fps -i $dis_video -r $fps -i $ref_video -lavfi \
+        "[0:v]settb=AVTB,setpts=PTS-STARTPTS[distorted];\
+            [1:v]settb=AVTB,setpts=PTS-STARTPTS[reference];\
+            [distorted][reference]ssim=f=$OUTDIR/ssim/chunk$i.txt" -f null - 2>&1 | tail -1 | awk '{print $11}' | cut -d':' -f2)
+
+    echo "$i,$ssim" >>$OUTDIR/ssim/chunks.csv
+
+}
+
+# Data preparation for vqm by lossless coding
+function preparate_vqm {
+
+    local ref_video="$1"
+    local dis_video="$2"
+
+    local vid_name=$(myFileName "$ref_video")
+
+    createDirectory "/tmp/vqm/ref"
+    createDirectory "/tmp/vqm/dis"
+
+    local ref="/tmp/vqm/ref/$vid_name.mp4"
+    local dis="/tmp/vqm/dis/$vid_name.mp4"
+
+    ffmpeg -i $ref_video -crf 0 -c:v libx264 "$ref" 2>/dev/null
+    ffmpeg -i $dis_video -crf 0 -c:v libx264 "$dis" 2>/dev/null
+
+    echo "$ref $dis"
+
+}
+
+#
+# Calculate VQM
+#
+function vqm {
+
+    local ref_video="$1"
+    local dis_video="$2"
+    local vid_name=$(myFileName $ref)
+
+    createDirectory "$OUTDIR/vqm"
+
+    if [ ! -f $OUTDIR/vqm/chunks.csv ]; then
+        echo "chunk_n,vqm" >"$OUTDIR/vqm/chunks.csv"
+    fi
+
+    video_vqm=$(preparate_vqm $ref_video $dis_video)
+    read -r ref dis <<<"$video_vqm"
+
+    vqtool -p $dis -r $ref --vqm -v 0 -t 12 $OUTDIR/vqm/$vid_name >/dev/null
+    aux=$(cat "$OUTDIR/vqm/"$vid_name"_vqm_12s.csv" | sed 's/;/,/g' | cut -d',' -f2)
+    echo "$i,$aux" >>$OUTDIR/vqm/chunks.csv
+    rm "$OUTDIR/vqm/"$vid_name"_vqm_12s.csv" $OUTDIR/vqm/$vid_name"_vqm.log"
+}
+
+#
+# Calculate common metrics with libvmaf
+#
+function libvmaf_metrics {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    local vid_name=$(myFileName $ref_video)
+
+    local ref_height=$(flagsFfprobe $ref_video height)
+
+    local fps=$(flagsFfprobe $ref_video r_frame_rate)
+    local fps=$(echo $fps | bc -l)
+
+    local outDir=$OUTDIR/libvmaf
+
+    createDirectory $outDir
+
+    if [ "$ref_height" -ge "1440" ]; then
+        if [ ! -f "$OUTDIR/vmaf/chunk1.json" ]; then
+            printf "\n${YELLOW}[Info]: Using model 4K.  ${NC}"
+        fi
+        ffmpeg -r $fps -i $dis_video -r $fps -i $ref_video -lavfi libvmaf="log_fmt=json:log_path=$outDir/$vid_name.json:model_path=/vmaf/model/vmaf_float_4k_v0.6.1.json:n_threads=$NUM_THREADS:ms_ssim=1" -f null - 2>/dev/null
+    else
+        if [ "$ref_height" -ge "1080" ]; then
+            ffmpeg -r $fps -i $dis_video -r $fps -i $ref_video -lavfi libvmaf="log_fmt=json:log_path=$outDir/$vid_name.json:pool=mean:model_path=/vmaf/model/vmaf_float_v0.6.1.json:n_threads=$NUM_THREADS:ms_ssim=1" -f null - 2>/dev/null
+        else
+            if [ ! -f "$outDir/chunk1.json" ]; then
+                printf "\n${YELLOW}[Info]: Scale two videos to calculate VMAF (1080p).  ${NC}"
+            fi
+            ffmpeg -r $fps -i $dis_video -r $fps -i $ref_video -lavfi "[0:v]scale=-2:1080:flags=bicubic,setpts=PTS-STARTPTS[distorted];[1:v]scale=-2:1080:flags=bicubic,setpts=PTS-STARTPTS[reference];[distorted][reference]libvmaf=log_fmt=json:log_path=$outDir/$vid_name.json:pool=mean:model_path=/vmaf/model/vmaf_float_v0.6.1.json:n_threads=$NUM_THREADS:ms_ssim=1" -f null - 2>/dev/null
+        fi
+    fi
+}
+
+#
+# Calculate VMAF
+#
+function vmaf {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    local vid_name=$(myFileName $ref_video)
+
+    local outDirlibvmaf=$OUTDIR/libvmaf
+    local outDir=$OUTDIR/vmaf
+    createDirectory $outDir
+
+    if [ ! -f $outDir/chunks.csv ]; then
+        echo "chunk_n,vmaf" >$outDir/chunks.csv
+    fi
+
+    if [ -f "$outDirlibvmaf/$vid_name.json" ]; then
+        vmaf=$(jq ".pooled_metrics.vmaf.mean" $outDirlibvmaf/$vid_name.json)
+        echo "$i,$vmaf" >>$outDir/chunks.csv
+
+        jq --raw-output '{"frames": [.frames[] | {frameNum, vmaf: .metrics.vmaf}], "vmaf": {mean: .pooled_metrics.vmaf.mean}}' $outDirlibvmaf/$vid_name.json >$outDir/$vid_name.json
+    else
+        libvmaf_metrics $ref_video $dis_video
+        vmaf=$(jq ".pooled_metrics.vmaf.mean" $outDirlibvmaf/$vid_name.json)
+
+        jq --raw-output '{"frames": [.frames[] | {frameNum, vmaf: .metrics.vmaf}], "vmaf": {mean: .pooled_metrics.vmaf.mean}}' $outDirlibvmaf/$vid_name.json >$outDir/$vid_name.json
+
+        echo "$i,$vmaf" >>$outDir/chunks.csv
+    fi
+}
+
+#
+# Calculate MSSSIM
+#
+function msssim {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    local vid_name=$(myFileName $ref_video)
+
+    local outDirlibvmaf=$OUTDIR/libvmaf
+    local outDir=$OUTDIR/msssim
+
+    createDirectory $outDir
+
+    if [ ! -f $outDir/chunks.csv ]; then
+        echo "chunk_n,msssim" >$outDir/chunks.csv
+    fi
+
+    if [ -f "$outDirlibvmaf/$vid_name.json" ]; then
+        vmaf=$(jq ".pooled_metrics.vmaf.mean" "$outDirlibvmaf/chunk$i.json")
+        msssim=$(jq ".pooled_metrics.float_ms_ssim.mean" $outDirlibvmaf/$vid_name.json)
+        echo "$i,$msssim" >>$outDir/chunks.csv
+
+        jq --raw-output '{"frames": [.frames[] | {frameNum, float_ms_ssim: .metrics.float_ms_ssim}], "ms_ssim": {mean: .pooled_metrics.float_ms_ssim.mean}}' $outDirlibvmaf/$vid_name.json >$outDir/$vid_name.json
+
+    else
+        libvmaf_metrics $ref_video $dis_video
+        msssim=$(jq ".pooled_metrics.float_ms_ssim.mean" $outDirlibvmaf/$vid_name.json)
+        echo "$i,$msssim" >>$outDir/chunks.csv
+
+        jq --raw-output '{"frames": [.frames[] | {frameNum, float_ms_ssim: .metrics.float_ms_ssim}], "ms_ssim": {mean: .pooled_metrics.float_ms_ssim.mean}}' $outDirlibvmaf/$vid_name.json >$outDir/$vid_name.json
+    fi
+}
+
+#
+# Calculate VIF
+#
+function vif {
+
+    local ref_video=$1
+    local dis_video=$2
+
+    local vid_name=$(myFileName $ref_video)
+
+    local outDirlibvmaf=$OUTDIR/libvmaf
+
+    local outDir=$OUTDIR/vif
+
+    createDirectory $outDir
+
+    if [ ! -f $outDir/chunks.csv ]; then
+        echo "chunk_n,vif_scale0,vif_scale1,vif_scale2,vif" >$outDir/chunks.csv
+    fi
+
+    if [ -f "$outDirlibvmaf/$vid_name.json" ]; then
+        vif_scale0=$(jq ".pooled_metrics.vif_scale0.mean" $outDirlibvmaf/$vid_name.json)
+        vif_scale1=$(jq ".pooled_metrics.vif_scale1.mean" $outDirlibvmaf/$vid_name.json)
+        vif_scale2=$(jq ".pooled_metrics.vif_scale2.mean" $outDirlibvmaf/$vid_name.json)
+        vif_scale3=$(jq ".pooled_metrics.vif_scale3.mean" $outDirlibvmaf/$vid_name.json)
+        echo "$i,$vif_scale0,$vif_scale1,$vif_scale2,$vif_scale3" >>$outDir/chunks.csv
+
+        jq --raw-output '{"frames": [.frames[] | {frameNum, vif_scale0: .metrics.vif_scale0, vif_scale1: .metrics.vif_scale1, vif_scale2: .metrics.vif_scale2, vif_scale3: .metrics.vif_scale3}], "vif": {vif_scale0_mean: .pooled_metrics.vif_scale0.mean, vif_scale1_mean: .pooled_metrics.vif_scale1.mean, vif_scale2_mean: .pooled_metrics.vif_scale2.mean, vif_scale3_mean: .pooled_metrics.vif_scale3.mean}}' $outDirlibvmaf/$vid_name.json >$outDir/$vid_name.json
+
+    else
+        libvmaf_metrics $ref_video $dis_video
+        vif_scale0=$(jq ".pooled_metrics.vif_scale0.mean" $outDirlibvmaf/$vid_name.json)
+        vif_scale1=$(jq ".pooled_metrics.vif_scale1.mean" $outDirlibvmaf/$vid_name.json)
+        vif_scale2=$(jq ".pooled_metrics.vif_scale2.mean" $outDirlibvmaf/$vid_name.json)
+        vif_scale3=$(jq ".pooled_metrics.vif_scale3.mean" $outDirlibvmaf/$vid_name.json)
+        echo "$i,$vif_scale0,$vif_scale1,$vif_scale2,$vif_scale3" >>$outDir/chunks.csv
+
+        jq --raw-output '{"frames": [.frames[] | {frameNum, vif_scale0: .metrics.vif_scale0, vif_scale1: .metrics.vif_scale1, vif_scale2: .metrics.vif_scale2, vif_scale3: .metrics.vif_scale3}], "vif": {vif_scale0_mean: .pooled_metrics.vif_scale0.mean, vif_scale1_mean: .pooled_metrics.vif_scale1.mean, vif_scale2_mean: .pooled_metrics.vif_scale2.mean, vif_scale3_mean: .pooled_metrics.vif_scale3.mean}}' $outDirlibvmaf/$vid_name.json >$outDir/$vid_name.json
+    fi
+}
+
+#
+# Check extention output file
+#
+function checkExt {
+    local output_ext=$1
+
+    if [ $output_ext == "csv" ] || [ $output_ext == "json" ] || [ $output_ext == "xml" ]; then
+        echo "Good extention" >/dev/null
+    else
+        printf "${RED}[Error]:${NC} Allowable extensions {csv, json, xml}, not ${YELLOW}$output_ext${NC}. \n"
+        badUsage
+        exit 1
+    fi
+}
+
+#
+# Check output directory
+#
+function checkOutDir {
+    local output_dir=$1
+
+    if [ -d $output_dir ]; then
+        mv $output_dir $output_dir"_"$(takeTime)
+        mkdir $output_dir
+    else
+        mkdir $output_dir 2>/tmp/error.log
+        if [ ! -d $output_dir ]; then
+            error=$(cat /tmp/error.log | cut -d":" -f2-)
+            printf "${RED}[Error]:${NC} The directory for the results must be located in the directory mounted, not ${YELLOW}$output_dir${NC}.
+         Error: $error \n"
+            badUsage
+            exit 1
+        fi
+    fi
+}
+
+#
+# Process results
+#
+function processResultsQuality {
+    local path_metric=$1
+    local output_ext=$2
+
+    /scripts/format_results.py $path_metric $output_ext
+}
+
+#
+# Process metrics
+#
+function processMetric {
+
+    local vid_ref=$1
+    local vid_dis=$2
+
+    local metrics=($APSNR $BRISQUE $CAMBI $CIEDE2000 $MSSSIM $NIQE $PSNR $PSNRHVS $SSIM $STRRED $VIIDEO $VMAF $VQM $VIF $ALL)
+
+    if [ -d $OUTDIR ]; then
+        echo "pass" >/dev/null
+    else
+        mkdir $OUTDIR
+    fi
+
+    for element in "${metrics[@]}"; do
+        case ${element} in
+        apsnr)
+            printf "\n${GREEN}[Step]:${NC} Process APSNR. "
+            apsnr $vid_ref $vid_dis &
+            spinner
+            ;;
+        brisque)
+            printf "\n${GREEN}[Step]:${NC} Process BRISQUE. "
+            brisque $vid_dis &
+            spinner
+            ;;
+        cambi)
+            printf "\n${GREEN}[Step]:${NC} Process CAMBI. "
+            cambi $vid_ref $vid_dis &
+            spinner
+            ;;
+        ciede2000)
+            printf "\n${GREEN}[Step]:${NC} Process CIEDE2000. "
+            ciede2000 $vid_ref $vid_dis &
+            spinner
+            ;;
+        msssim)
+            printf "\n${GREEN}[Step]:${NC} Process MS-SSIM. "
+            msssim $vid_ref $vid_dis &
+            spinner
+            ;;
+        niqe)
+            printf "\n${GREEN}[Step]:${NC} Process NIQE. "
+            niqe $vid_dis &
+            spinner
+            ;;
+        psnr)
+            printf "\n${GREEN}[Step]:${NC} Process PSNR. "
+            psnr $vid_ref $vid_dis &
+            spinner
+            ;;
+        psnrhvs)
+            printf "\n${GREEN}[Step]:${NC} Process PSNRHVS. "
+            psnrhvs $vid_ref $vid_dis &
+            spinner
+            ;;
+        ssim)
+            printf "\n${GREEN}[Step]:${NC} Process SSIM. "
+            ssim $vid_ref $vid_dis &
+            spinner
+            ;;
+        strred)
+            printf "\n${GREEN}[Step]:${NC} Process STRRED. "
+            strred $vid_ref $vid_dis &
+            spinner
+            ;;
+        viideo)
+            printf "\n${GREEN}[Step]:${NC} Process VIIDEO. "
+            viideo $vid_dis &
+            spinner
+            ;;
+        vmaf)
+            printf "\n${GREEN}[Step]:${NC} Process VMAF. "
+            vmaf $vid_ref $vid_dis &
+            spinner
+            ;;
+        vqm)
+            printf "\n${GREEN}[Step]:${NC} Process VQM. "
+            vqm $vid_ref $vid_dis &
+            spinner
+            ;;
+        vif)
+            printf "\n${GREEN}[Step]:${NC} Process VIF. "
+            vif $vid_ref $vid_dis &
+            spinner
+            ;;
+
+        esac
+    done
+}
+
+function fill_metrics {
+    APSNR=apsnr
+    BRISQUE=brisque # No reference
+    CAMBI=cambi
+    CIEDE2000=ciede2000
+    MSSSIM=msssim
+    NIQE=niqe # No reference
+    PSNR=psnr
+    PSNRHVS=psnrhvs
+    SSIM=ssim
+    STRRED=strred
+    VIIDEO=viideo # No reference
+    VMAF=vmaf
+    VQM=vqm
+    VIF=vif
+}
+
+#
+#Funtion to process request. Analyzes the required arguments.
+#
+function processRequest {
+
+    local check=$1
+
+    if [ "$check" != "" ]; then
+        badUsage
+        exit 1
+    else
+
+        # Check extention ouput file
+        checkExt $OUTEXT
+        # Check ouput directory
+        checkOutDir $OUTDIR
+        # Have you selected a metric?
+        requiredMetrics
+        # Detect required arguments
+        requiredArguments
+        # Check videos
+        checkVideos $V_REFERENCE $V_DISTORTED $NO_REFERENCE
+
+        if [ "$ALL" == "all" ]; then
+            fill_metrics
+        fi
+
+        # Split and processing selected metrics
+        splitVideos $V_REFERENCE $V_DISTORTED $NO_REFERENCE $SIZE $SCALE
+
+        # Delete libvmaf folder if it exists
+
+        if [ -d "$OUTDIR/libvmaf" ]; then
+            rm -r "$OUTDIR/libvmaf"
+        fi
+
+        # Processing results quality
+        processResultsQuality $OUTDIR $OUTEXT
+
+        printf "\n\n${GREEN}[Step]:${NC} Metric successfully calculated.\n"
+        tput cnorm
+    fi
+
+}
+
+function analyzesVideo {
+    printf "
+        $APSNR=APSNR
+        $BRISQUE=BRISQUE
+        $CAMBI=CAMBI
+        $CIEDE2000=CIEDE2000
+        $MSSSIM=msssim
+        $NIQE=NIQE
+        $PSNR=PSNR
+        $PSNRHVS=PSNRHVS
+        $SSIM=SSIM
+        $STRRED=STRRED
+        $VIIDEO=VIIDEO
+        $VMAF=VMAF
+        $VQM=VQM
+        $VIF=VIF
+        $ALL=ALL
+        $SIZE=SIZE
+"
+}
+
+function numberThreads {
+    numThreads=$(nproc --all)
+    if [ "$numThreads" -le 2 ]; then
+        NUMBER_THREADS=1
+    elif [ "$numThreads" -ge "3" ]; then
+        NUMBER_THREADS=$(($numThreads - 2))
+    fi
+    echo $NUMBER_THREADS
+}
+
+#
+# Definition of global variables
+#
+NO_REFERENCE=0
+
+NUM_THREADS=$(numberThreads)
+#
+# Process options
+#
+V_DISTORTED=unset
+V_REFERENCE=unset
+
+APSNR=unset
+BRISQUE=unset # No reference
+CAMBI=unset
+CIEDE2000=unset
+MSSSIM=unset
+NIQE=unset # No reference
+PSNR=unset
+PSNRHVS=unset
+SSIM=unset
+STRRED=unset
+VIIDEO=unset # No reference
+VMAF=unset
+VQM=unset
+VIF=unset
+ALL=unset
+SIZE=1
+OUTDIR=unset
+OUTEXT=csv
+#
+# Parsed arguments
+#
+
+PARSED_ARGUMENTS=$(getopt -a -n vmq-core -o d:r:abcej:mnpxstvqflhw:Vz:o: --long distorted:,reference:,apsnr,brisque,cambi,ciede2000,msssim,niqe,psnr,psnrhvs,ssim,strred,viideo,vmaf,vqm,vif,all,help,ext:,version,size:,outdir: -- "$@")
+VALID_ARGUMENTS=$?
+NUMBER_ARGUMENTS=("$@")
+
+if [ "$VALID_ARGUMENTS" != "0" ] || [ "$#" == "0" ]; then
+    badUsage
+    exit 1
+fi
+
+#echo "PARSED_ARGUMENTS is $PARSED_ARGUMENTS"
+eval set -- "$PARSED_ARGUMENTS"
+while :; do
+    case "$1" in
+    -d | --distorted)
+        V_DISTORTED=$2
+        shift 2
+        ;;
+    -r | --reference)
+        V_REFERENCE=$2
+        shift 2
+        ;;
+    -a | --apsnr)
+        APSNR=apsnr
+        shift
+        ;;
+    -b | --brisque)
+        BRISQUE=brisque
+        shift
+        ;;
+    -c | --cambi)
+        CAMBI=cambi
+        shift
+        ;;
+    -e | --ciede2000)
+        CIEDE2000=ciede2000
+        shift
+        ;;
+    -m | --msssim)
+        MSSSIM=msssim
+        shift
+        ;;
+    -n | --niqe)
+        NIQE=niqe
+        shift
+        ;;
+    -p | --psnr)
+        PSNR=psnr
+        shift
+        ;;
+    -x | --psnrhvs)
+        PSNRHVS=psnrhvs
+        shift
+        ;;
+    -s | --ssim)
+        SSIM=ssim
+        shift
+        ;;
+    -t | --strred)
+        STRRED=strred
+        shift
+        ;;
+    -w | --viideo)
+        VIIDEO=viideo
+        shift
+        ;;
+    -v | --vmaf)
+        VMAF=vmaf
+        shift
+        ;;
+    -q | --vqm)
+        VQM=vqm
+        shift
+        ;;
+    -f | --vif)
+        VIF=vif
+        shift
+        ;;
+    -z | --size)
+        SIZE=$2
+        shift 2
+        ;;
+    -l | --all)
+        ALL=all
+        shift
+        ;;
+    -o | --outdir)
+        OUTDIR=$2
+        shift 2
+        ;;
+    -j | --ext)
+        OUTEXT=$2
+        shift 2
+        ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    -V | --version)
+        version
+        exit 0
+        ;;
+    --)
+        processRequest $2
+        shift
+        break
+        ;;
+    *)
+        echo "Unexpected option: $1 - this should not happen."
+        badUsage
+        ;;
+    esac
+done
+
+exit 1
