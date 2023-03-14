@@ -355,6 +355,19 @@ function splitVideoProcess {
 
     local ext=$(echo "${video_dis#*.}")
 
+    if [ $ext == "mkv" ] || [ $ext == "webm" ]; then
+        local dur_aux=$(flagsFfprobeTags $video_dis duration)
+        local duration=$(echo $dur_aux | awk -F: '{ print ($1 * 3600) + ($2 * 60) + $3 }')
+    else
+        local duration=$(flagsFfprobe $video_dis duration)
+    fi
+
+    local duration=$(echo $duration | awk '{print int($1)}')
+    local n=0
+    local i=1
+
+    BITDEPTH=8
+
     if [ "$scale" = "1" ] && [ "$typ_path" = "0" ]; then
 
         local wid_ref=$(flagsFfprobe $video_ref width)
@@ -369,19 +382,6 @@ function splitVideoProcess {
         video_dis=/tmp/$vid_name_dis.y4m
 
     fi
-
-    if [ $ext == "mkv" ] || [ $ext == "webm" ]; then
-        local dur_aux=$(flagsFfprobeTags $video_dis duration)
-        local duration=$(echo $dur_aux | awk -F: '{ print ($1 * 3600) + ($2 * 60) + $3 }')
-    else
-        local duration=$(flagsFfprobe $video_dis duration)
-    fi
-
-    local duration=$(echo $duration | awk '{print int($1)}')
-    local n=0
-    local i=1
-
-    BITDEPTH=8
 
     createDirectory $path_ref
     createDirectory $path_ref/y4m
