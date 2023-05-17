@@ -1,5 +1,14 @@
 # VIDEO QUALITY METRICS TOOLKIT - VQMTK
 
+# Table of contents
+1. [Run the container and explore the Jupyter notebooks](#run_jupyter)
+   1. [Run the container using the sample videos included in the image](#included_videos)
+   2. [Run the container providing your videos](#include_your_videos)
+   3. [Remote access as a service](#run_as_service)
+2. [Run the vqmcli script included in the container](#vqmcli)
+3. [Supported video codecs per video container for each quality metric](#supported)
+4. [Build container image locally](#build_image)
+
 This repository describes a container that includes the artifacts to compute 14 video quality metrics and the SI/TI indicators. The container includes Jupyter notebooks to show how to compute each metric. Besides, a command line interface script is included. This script allows the computation of a combination of metrics and can be integrated in any processing pipeline.
 
 ## Cite
@@ -17,11 +26,11 @@ doi={},
 ```
 If you use this container, please cite that paper.
 
-## Run the container and explore the Jupyter notebooks
+## Run the container and explore the Jupyter notebooks <a name="run_jupyter"></a>
 
 In the following we assume that you are using the dockerhub image, if you want to use the local built image change the image to `vqmt:latest` (or the name given to that local image).
 
-### Run the container using the sample videos included in the image
+### Run the container using the sample videos included in the image <a name="included_videos"></a>
 
 Start the container
 ```sh
@@ -61,7 +70,7 @@ docker rm vqmtk
 ```
 You cannot run two containers with the same name in the same machine. You can assign a different name to the second one or delete the first one.
 
-### Run the container providing your videos
+### Run the container providing your videos <a name="include_your_videos"></a>
 In the following, we assume that there is a folder in your file system named `MY_FOLDER`with a subfolder `experiments` that contains subfolders `videos` and `results`.
 The `videos` subfolder contains the videos that you want to analyze. The `results` folder will contain the results of the metrics.
 
@@ -74,10 +83,11 @@ docker run --name vqmtk -d -p 8888:8888 -p 8050:8050 -e JUPYTER_ENABLE_LAB=yes -
 ```
 Inside Jupyter, we can see a new folder named `experiments` (inside the folder `work`)  and all the files created inside this folder will be stored in our file system.
 
-### Remote access as a service
+### Remote access as a service <a name="run_as_service"></a>
 For remote access, we recommend to use this container along with Nginx and a valid certificate, and use `docker-compose` to start both containers. This is out of the scope of this project, you can find documentation elsewhere.
 
-## Run the vqmcli script included in the container
+## Run the vqmcli script included in the container <a name="vqmcli"></a>
+
 
 List the allowed options of the script:
 ```sh
@@ -179,8 +189,7 @@ Some features of this script:
  - The SITI can be computed and reported for each segment.
  - Even though the metrics are averaged for each segment, the results folder has the metrics per frame (if the implementation of the metrics provides them) in the subfolder of each metric.
 
-
-## Supported video codecs per container for each quality metric
+## Supported video codecs per video container for each quality metric <a name="supported"></a>
 | Container 	|  MP4  	|       	|     	|     	|  MKV  	|       	|     	|     	| WEBM 	|     	| RAW 	|
 |:---------:	|:-----:	|:-----:	|:---:	|:---:	|:-----:	|:-----:	|:---:	|:---:	|:----:	|:---:	|:---:	|
 |   Codec   	| H.264 	| H.265 	| VP9 	| AV1 	| H.264 	| H.265 	| VP9 	| AV1 	|  VP9 	| AV1 	| Y4M 	|
@@ -200,7 +209,7 @@ Some features of this script:
 |    VQM    	|   ✓   	|   ✓   	|  ✓  	|  ✓  	|   ✓   	|   ✓   	|  ✓  	|  ✓  	|   ✓  	|  ✓  	|  ✓  	|
 
 
-## Build docker image locally
+## Build container image locally <a name="build_image"></a>
 Alternatively, you can build the image locally using the provided Dockerfile.
 
 Clone this repository:
