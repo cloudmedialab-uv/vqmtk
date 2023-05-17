@@ -93,17 +93,17 @@ mkdir -p /tmp/videos/dist
 mkdir -p /tmp/videos/ref
 
 # To avoid write permissions problems inside the container
-chmod -R 777 /tmp/videos
+sudo chmod -R 777 /tmp/videos
 
 # Download a video
 wget https://cdn.spacetelescope.org/archives/videos/hd_1080p25_screen/hubblecast06f.mp4 -O /tmp/videos/ref/ref.mp4
 
 # Use ffmpeg (included in the container) to generate a distorted version
-docker run --rm --name ffmpeg -v /tmp/videos:/videos vqmtk:latest ffmpeg -y -i /videos/ref/ref.mp4 -c:v libx264 -crf 40 /videos/dist/dist.mp4
+docker run --rm --name ffmpeg -v /tmp/videos:/videos cloudmedialab/vqmtk:latest ffmpeg -y -i /videos/ref/ref.mp4 -c:v libx264 -crf 40 /videos/dist/dist.mp4
 
 # Compute video quality metric VMAF and SITI using the script vqmcli
 # included in the container:
-docker run --rm --name vqmcli -v /tmp/videos:/videos vqmtk:latest vqmcli --vmaf --siti -r /videos/ref/ref.mov -d /videos/dist/dist.mp4 -o /videos/results-1s --size 1
+docker run --rm --name vqmcli -v /tmp/videos:/videos cloudmedialab/vqmtk:latest vqmcli --vmaf --siti -r /videos/ref/ref.mp4 -d /videos/dist/dist.mp4 -o /videos/results-1s --size 1
 
 # Results will be /tmp/videos/results-1s:
 #  vqmcli-results.csv : contains the data with one row per temporal segment
