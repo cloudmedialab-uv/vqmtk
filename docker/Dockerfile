@@ -483,7 +483,7 @@ RUN \
   make clean; make
 
 
-FROM ubuntu:focal as vqm-metric
+FROM ubuntu:jammy as vqm-metric
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -498,7 +498,7 @@ RUN cd / && \
 
 # Build final image with Jupyter Notebook
 # copying artifacts from the intermediate containers
-FROM jupyter/base-notebook
+FROM jupyter/base-notebook:ubuntu-22.04
 
 USER root
 
@@ -515,13 +515,8 @@ RUN pip install --no-cache-dir -r /requirements.txt
 
 RUN \
   apt-get update -y && \
-  apt-get install -y --no-install-recommends ca-certificates git
-
-# Add virtual environment Python2.7 - Scikit-Video
-RUN \
-  apt-get install curl software-properties-common --no-install-recommends -y && \
-  add-apt-repository ppa:deadsnakes/ppa -y && \
-  apt-get install python2.7 -y --no-install-recommends
+  apt-get install -y --no-install-recommends ca-certificates git curl && \
+  apt-get install -y python2
 
 RUN \
   cd / && \
@@ -534,13 +529,14 @@ RUN \
 
 USER jovyan
 
-# Install kernel for by Scikit-Video
+# Install kernel for Scikit-Video
 RUN \
    python2.7 -m virtualenv /scikitvenv --system-site-packages && \
    source /scikitvenv/bin/activate && \
    pip install scikit-video pandas && \
    pip install ipykernel && \
    python2.7 -m ipykernel install --user --name=Scikit-Video
+
 
 USER root
 
