@@ -15,12 +15,13 @@ This repository describes a container that includes the artifacts to compute 14 
 This work has been published in SoftwareX:
 
 ```bib
-@article{doi,
+@article{Moina2023-vqmtk,
 authors={Wilmer Moina-Rivera and Juan Gutiérrez-Aguado and Miguel Garcia-Pineda},
 journal={SoftwareX},
 title={Video Quality Metrics Toolkit: An Open Source Software to Assess Video Quality},
 year={2023},
 doi={10.1016/j.softx.2023.101427},
+url={https://doi.org/10.1016/j.softx.2023.101427}
 }
 ```
 If you use this container, please cite that paper.
