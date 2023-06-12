@@ -12,16 +12,15 @@
 This repository describes a container that includes the artifacts to compute 14 video quality metrics and the SI/TI indicators. The container includes Jupyter notebooks to show how to compute each metric. Besides, a command line interface script is included. This script allows the computation of a combination of metrics and can be integrated in any processing pipeline.
 
 ## Cite
-This work in under revision in SoftwareX (this is a provisional bibtex entry):
+This work has been published in SoftwareX:
 
 ```bib
 @article{doi,
 authors={Wilmer Moina-Rivera and Juan Gutiérrez-Aguado and Miguel Garcia-Pineda},
 journal={SoftwareX},
 title={Video Quality Metrics Toolkit: An Open Source Software to Assess Video Quality},
-vol={Under revision},
 year={2023},
-doi={},
+doi={10.1016/j.softx.2023.101427},
 }
 ```
 If you use this container, please cite that paper.
