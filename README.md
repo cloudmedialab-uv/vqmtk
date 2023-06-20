@@ -19,7 +19,10 @@ This work has been published in SoftwareX:
 authors={Wilmer Moina-Rivera and Juan Gutiérrez-Aguado and Miguel Garcia-Pineda},
 journal={SoftwareX},
 title={Video Quality Metrics Toolkit: An Open Source Software to Assess Video Quality},
-year={2023},
+volume = {23},
+pages = {101427},
+year = {2023},
+issn = {2352-7110},
 doi={10.1016/j.softx.2023.101427},
 url={https://doi.org/10.1016/j.softx.2023.101427}
 }
